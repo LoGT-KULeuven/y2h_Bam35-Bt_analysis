@@ -1,0 +1,11 @@
+channels:
+ - conda-forge
+ - bioconda
+dependencies:
+ - biopython
+ - bwa
+ - samtools
+ - blast
+ - bedtools
+ - pandas
+ - cd-hit

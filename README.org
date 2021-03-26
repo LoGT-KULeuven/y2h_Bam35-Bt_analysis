@@ -1,0 +1,26 @@
+* Dataset description
+The dataset analyzed here consists of two sets of files and is
+described in:
+
+[[tbd][TBD]]
+
+DOI: TBD
+
+All sequencing files are available via the NCBI database and were
+gathered using a MiSeq machine, with a paired-end 2*300 bp approach,
+based on amplicons.
+
+* Environmnent
+The pipeline relies on [[https://snakemake.readthedocs.io/en/stable/getting_started/installation.html][snakemake]] for the automation of the analysis,
+which in turns uses [[https://docs.conda.io/en/latest/miniconda.html][conda]] to create the environment for each of the
+specific steps in the pipeline. 
+
+Other softwares included in this project, separately from those
+available through conda include:
+
+- [[https://bioinformatics.cvr.ac.uk/weesam-version-1-5/][an adapted version of weeSAM]]
+
+* Analysis of the library
+The snakefile corresponding to the analysis, together with the
+definition of the different conda environments is available in the 
+* Analysis of the y2h positive interactions
