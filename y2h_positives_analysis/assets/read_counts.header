@@ -1,0 +1,2 @@
+Lib	R1Raw	R2Raw	R1Trimmomatic	R2Trimmomatic	R1Seqtk	R2Seqtk	R1ATG	R2ATG	R1nonATG	R2nonATG	R1NonProtFilter1	R2NonProtFilter1	R1PassFilter1	R2PassFilter1	FragmentsTotal	FragmentsATG	FragmentsNonATG	FragmentsUnique	FragmentsValidated	FragmentsRejected	FragmentsValidatedUnique
+
