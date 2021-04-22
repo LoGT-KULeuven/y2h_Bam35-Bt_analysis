@@ -31,6 +31,9 @@ rule all:
         expand("reporting/fragment_counts/all/{sample}.fragments.counts_blastp_with_length_and_translation.tsv", sample=SAMPLES),
         expand("coverage/{sample}_total_html_results/{sample}.html", sample=SAMPLES)
 
+#### Forcing rule order
+ruleorder:fastqc_pre_trimming > trimmomatic > fastqc_post_trimming > seqtk > fastqc_post_seqtk > cleanup_initial > index_ref > map_ATG_extract_fragments >  translate_fragments_and_filter > map_fragments > read_counts > consolidate_read_counts > mapping_bwa_ref >  extract_unmapped > consolidate_read_mapping_counts >  counts_reads_features > counts_fragments_blastp >  coverage_weesam
+                                                                                                                                                            
 ############################################################
 #### PART I:                                             ###
 #### Processing the raw fastq files with trimmomatic and ###
@@ -155,7 +158,7 @@ rule index_ref:
     input:
         HER1410="references/HER1410.fasta"
     output:
-        "references/HER1410.fasta.amb"
+        REF="references/HER1410.fasta.amb"
     conda:
         "envs/fragments.yaml"
     shell:
@@ -197,6 +200,7 @@ rule translate_fragments_and_filter:
         FRAGMENTSNRCLUS="fragments/{sample}.fragments.atg.nr.fasta.clstr",
         FRAGMENTSVALIDATED="fragments/{sample}.fragments.validated.fasta",
         FragmentsValidatedUnique="fragments/{sample}.fragments.validated.nr.fasta",
+        FragmentsValidatedUniqueClstr="fragments/{sample}.fragments.validated.nr.fasta.clstr",  
         BLASTP="fragments/{sample}.blastp",
         BLASTPHEADER="fragments/{sample}.blastp_header.txt",
         FFAS="fragments/{sample}.fragments.atg.nr.ffa",
@@ -265,7 +269,7 @@ rule read_counts:
         FragmentsRejected="fragments/{sample}.fragments.rejected.fasta",
         FragmentsValidatedUnique="fragments/{sample}.fragments.validated.nr.fasta"
     output:
-        "reporting/read_counts/{sample}.tsv"
+        REPORT="reporting/read_counts/{sample}.tsv"
     shell:
         "mkdir -p reporting/read_counts/ && "
         "echo -e \"{wildcards.sample}\\t"
@@ -290,7 +294,7 @@ rule read_counts:
         "$(cat {input.FragmentsValidated} | grep \">\" | wc -l)\\t"
         "$(cat {input.FragmentsRejected} | grep \">\" | wc -l)\\t"
         "$(cat {input.FragmentsValidatedUnique} | grep \">\" | wc -l)\\t\""
-        "> {output}"
+        "> {output.REPORT}"
 
 rule consolidate_read_counts:
     input:
@@ -298,9 +302,9 @@ rule consolidate_read_counts:
         L1COUNTS="reporting/read_counts/L1.tsv",
         L2COUNTS="reporting/read_counts/L2.tsv"
     output:
-        "reporting/read_counts/consolidated.tsv"
+        REPORT="reporting/read_counts/consolidated.tsv"
     shell:
-        "cat {input.HEADER} {input.L1COUNTS} {input.L2COUNTS} > {output}"
+        "cat {input.HEADER} {input.L1COUNTS} {input.L2COUNTS} > {output.REPORT}"
 
 # Other QC: mapping the reads to the reference (including plasmids and phiX and yeast chromosome
 rule mapping_bwa_ref:
@@ -339,6 +343,8 @@ rule extract_unmapped:
         "bamToFastq -i {output.UNMAPPEDBAMSORTED} -fq {output.UNMAPPEDREADS}"
 
 rule consolidate_read_mapping_counts:
+    input:
+        "mapping/combined_references/L1.all.unmapped.bam"
     output:
         "reporting/mapping_reads_counts/consolidated.tsv"
     conda:

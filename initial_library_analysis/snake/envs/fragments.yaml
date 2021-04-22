@@ -3,9 +3,9 @@ channels:
  - bioconda
 dependencies:
  - biopython
- - bwa
- - samtools
+ - bwa=0.7.17
+ - samtools=1.9
  - blast
- - bedtools
+ - bedtools=2.29.2
  - pandas
  - cd-hit
