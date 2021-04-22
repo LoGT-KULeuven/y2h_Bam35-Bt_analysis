@@ -13,7 +13,8 @@ based on amplicons.
 * Environmnent
 The pipeline relies on [[https://snakemake.readthedocs.io/en/stable/getting_started/installation.html][snakemake]] for the automation of the analysis,
 which in turns uses [[https://docs.conda.io/en/latest/miniconda.html][conda]] to create the environment for each of the
-specific steps in the pipeline. 
+specific steps in the pipeline. The other python package necessary to
+get the pipeline started is [[https://pandas.pydata.org/][Pandas]].
 
 Other softwares included in this project, separately from those
 available through conda include:
@@ -21,6 +22,12 @@ available through conda include:
 - [[https://bioinformatics.cvr.ac.uk/weesam-version-1-5/][an adapted version of weeSAM]]
 
 * Analysis of the library
-The snakefile corresponding to the analysis, together with the
-definition of the different conda environments is available in the 
+The snakefile corresponding to the analysis of the initial library of
+fragments, together with the definition of the different conda
+environments is available in the folder [[file:initial_library_analysis/][initial_library_analysis]]
+
 * Analysis of the y2h positive interactions
+The snakefile corresponding to the analysis of the positive
+interaction results, together with the definition of
+the different conda environments is available in the folder
+[[file:y2h_positives_analysis/][y2h_positives_analysis]]
