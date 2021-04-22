@@ -1,0 +1,468 @@
+configfile: "config.yaml"
+workdir: config['wd']
+         
+import pandas as pd
+         
+sample_file_all = config["sample_file_all"]
+SAMPLES_ALL = pd.read_table(sample_file_all)['names']
+
+sample_file_L1 = config["sample_file_L1"]
+SAMPLES_L1 = pd.read_table(sample_file_L1)['names']
+
+sample_file_L2 = config["sample_file_L2"]
+SAMPLES_L2 = pd.read_table(sample_file_L2)['names']
+
+TEST=["22_P2_L1_over300"]
+rule all:
+    input:
+        # processing the raw fastq files
+        expand("qc/fastqc_pre/{sample}/{sample}_R1_fastqc.html", sample=SAMPLES_ALL),
+        expand("illumina/clean/trimmomatic/{sample}R1.fastq.gz", sample=SAMPLES_ALL),
+        expand("qc/fastqc_post/trimmomatic/{sample}/{sample}R1_fastqc.html", sample=SAMPLES_ALL),
+        expand("illumina/clean/seqtk_L1/{sample}R1.fastq.gz", sample=SAMPLES_L1),
+        expand("illumina/clean/seqtk_L2/{sample}R1.fastq.gz", sample=SAMPLES_L2),
+        
+        # cleaning up the read
+        expand("illumina/ATG_nonATG_proteome_nonProteome/{sample}/{sample}_R1.pass.fastq.gz", sample=TEST),
+        "references/HER1410.fasta.amb",
+        expand("mapping/{sample}/{sample}.all.ATG.aln.sorted.bam", sample=SAMPLES_ALL),
+        expand("fragments/{sample}/{sample}.intersects.tsv", sample=SAMPLES_ALL),
+        expand("fragments/{sample}/{sample}.fragments.fasta", sample=SAMPLES_ALL),
+        expand("fragments/{sample}/{sample}.fragments.validated.fasta", sample=SAMPLES_ALL),
+        expand("mapping/{sample}/{sample}.fragments.validated.sorted.bam", sample=SAMPLES_ALL),
+        
+        # counting raw, clean reads, mapping, unmapped reads
+        expand("reporting/read_counts/{sample}.tsv", sample=SAMPLES_ALL),
+        "reporting/read_counts/consolidated.tsv",
+        expand("mapping/HER1410/{sample}.HER1410.sorted.bam", sample=SAMPLES_ALL),
+        expand("mapping/combined_references/{sample}.fastq", sample=SAMPLES_ALL),
+        "reporting/mapping_reads_counts/consolidated.tsv",
+
+        # counting features
+        expand("reporting/htseq/all/{sample}.tsv", sample=SAMPLES_ALL),
+        expand("reporting/fragment_counts/all/{sample}.fragments.counts_blastp_with_length_and_translation.tsv", sample=SAMPLES_ALL),
+        "reporting/blastp_consolidated.tsv",
+        #expand("reporting/htseq/raw/{sample}.tsv", sample=SAMPLES_ALL)
+        
+############################################################
+#### Processing the raw fastq files with trimmomatic and ###
+#### seqtk and generate QC reports                       ###
+############################################################
+    
+rule fastqc_pre_trimming:
+    input:
+        R1="illumina/raw/{sample}_R1.fastq.gz",
+        R2="illumina/raw/{sample}_R2.fastq.gz"
+    output:
+        OR1=multiext("qc/fastqc_pre/{sample}/{sample}_R1_fastqc", ".html", ".zip"),
+        OR2=multiext("qc/fastqc_pre/{sample}/{sample}_R2_fastqc", ".html", ".zip")
+    threads:
+        config['threads']
+    conda:
+        "envs/fastqc.yaml"
+    shell:
+        "mkdir -p qc/fastqc_pre/{wildcards.sample} && "
+        "fastqc -f fastq -t {threads} -o qc/fastqc_pre/{wildcards.sample} {input.R1} && "
+        "fastqc -f fastq -t {threads} -o qc/fastqc_pre/{wildcards.sample} {input.R2}"
+
+rule trimmomatic:
+    input:
+        R1="illumina/raw/{sample}_R1.fastq.gz",
+        R2="illumina/raw/{sample}_R2.fastq.gz"
+    output:
+        R1="illumina/clean/trimmomatic/{sample}R1.fastq.gz",
+        R1U="illumina/clean/trimmomatic/{sample}R1U.fastq.gz",
+        R2="illumina/clean/trimmomatic/{sample}R2.fastq.gz",
+        R2U="illumina/clean/trimmomatic/{sample}R2U.fastq.gz",
+        RU="illumina/clean/trimmomatic/{sample}RU.fastq.gz"
+    conda:
+        "envs/trimmomatic.yaml"
+    shell:
+        "mkdir -p illumina/clean/trimmomatic/ && "
+        "mkdir -p qc/trimmomatic/ && "
+        "trimmomatic PE -phred33 {input.R1} {input.R2} {output.R1} {output.R1U} {output.R2} {output.R2U} MINLEN:185  2> qc/trimmomatic/{wildcards.sample}.log && "
+        "cat {output.R1U} {output.R2U} > {output.RU}"
+
+rule fastqc_post_trimming:
+    input:
+        R1="illumina/clean/trimmomatic/{sample}R1.fastq.gz",
+        R2="illumina/clean/trimmomatic/{sample}R2.fastq.gz"
+    output:
+        R1out=multiext("qc/fastqc_post/trimmomatic/{sample}/{sample}R1_fastqc", ".html", ".zip"),
+        R2out=multiext("qc/fastqc_post/trimmomatic/{sample}/{sample}R2_fastqc", ".html", ".zip")
+    threads:
+        config['threads']
+    conda:
+        "envs/fastqc.yaml"
+    shell:
+        "mkdir -p qc/fastqc_post/trimmomatic && "
+        "fastqc -f fastq -t {threads} -o qc/fastqc_post/trimmomatic/{wildcards.sample} {input.R1} && "
+        "fastqc -f fastq -t {threads} -o qc/fastqc_post/trimmomatic/{wildcards.sample} {input.R2}"
+
+# trimming lenghts different in L1/L2 so using 2 rules
+rule seqtk_L1:
+    input:
+        R1="illumina/clean/trimmomatic/{sample}R1.fastq.gz",
+        R2="illumina/clean/trimmomatic/{sample}R2.fastq.gz"
+    output:
+        R1out="illumina/clean/seqtk_L1/{sample}R1.fastq.gz",
+        R2out="illumina/clean/seqtk_L1/{sample}R2.fastq.gz",
+    conda:
+        "envs/seqtk.yaml"
+    shell:
+        "mkdir -p illumina/clean/seqtk_L1 illumina/clean/seqtk && "
+        "seqtk trimfq -b 99 {input.R1} | gzip > {output.R1out} && "
+        "seqtk trimfq -b 38 {input.R2} | gzip > {output.R2out} && "
+        "cp -t illumina/clean/seqtk/ {output.R1out} {output.R2out}"
+
+# trimming lenghts different in L1/L2 so using 2 rules
+rule seqtk_L2:
+    input:
+        R1="illumina/clean/trimmomatic/{sample}R1.fastq.gz",
+        R2="illumina/clean/trimmomatic/{sample}R2.fastq.gz"
+    output:
+        R1out="illumina/clean/seqtk_L2/{sample}R1.fastq.gz",
+        R2out="illumina/clean/seqtk_L2/{sample}R2.fastq.gz",
+    conda:
+        "envs/seqtk.yaml"
+    shell:
+        "mkdir -p illumina/clean/seqtk_L2 illumina/clean/seqtk && "
+        "seqtk trimfq -b 59 {input.R1} | gzip > {output.R1out} && "
+        "seqtk trimfq -b 38 {input.R2} | gzip > {output.R2out} && "
+        "cp -t illumina/clean/seqtk/ {output.R1out} {output.R2out}"
+
+############################################################
+#### CLEANING UP FURTHER THE READS (remove the R1 reads ####
+#### that don't start with ATG, or where the R1 reads   ####
+#### translated doesn't match an annotated prot (out of ####
+#### frame)                                             ####
+############################################################
+
+rule cleanup_initial:
+    input:
+        R1C="illumina/clean/seqtk/{sample}R1.fastq.gz",
+        R2C="illumina/clean/seqtk/{sample}R2.fastq.gz",
+        PROTEOME="references/proteome/HER1410_nonewline.faa"
+    output:
+        R1C="illumina/ATG_nonATG_proteome_nonProteome/{sample}/{sample}_R1.pass.fastq.gz",
+        R2C="illumina/ATG_nonATG_proteome_nonProteome/{sample}/{sample}_R2.pass.fastq.gz",
+        R1NATG="illumina/ATG_nonATG_proteome_nonProteome/{sample}/{sample}_R1.removed_nonATG.fastq.gz",
+        R2NATG="illumina/ATG_nonATG_proteome_nonProteome/{sample}/{sample}_R2.removed_nonATG.fastq.gz",
+        R1NPROT="illumina/ATG_nonATG_proteome_nonProteome/{sample}/{sample}_R1.removed_nonProt.fastq.gz",
+        R2NPROT="illumina/ATG_nonATG_proteome_nonProteome/{sample}/{sample}_R2.removed_nonProt.fastq.gz",
+        R1ATG="illumina/ATG_nonATG_proteome_nonProteome/{sample}/{sample}R1.ATG.fastq.gz",
+        R2ATG="illumina/ATG_nonATG_proteome_nonProteome/{sample}/{sample}R2.ATG.fastq.gz"
+    conda:
+        "envs/fragments.yaml"
+    shell:
+        "python scripts/filter_reads.py {input.R1C} {input.R2C} {output.R1C} "
+        "{output.R2C} {output.R1NATG} {output.R2NATG} {output.R1NPROT} {output.R2NPROT} "
+        "{input.PROTEOME} && "
+        "cat {output.R1C} {output.R1NPROT} > {output.R1ATG} && "
+        "cat {output.R2C} {output.R2NPROT} > {output.R2ATG}"
+
+rule index_ref:
+    input:
+        HER1410="references/HER1410.fasta",
+        PROTEOME="references/proteome/HER1410_nonewline.faa"
+    output:
+        HER1410index="references/HER1410.fasta.amb"
+    conda:
+        "envs/fragments.yaml"
+    shell:
+        "bwa index -b bwtsw {input.HER1410} && "
+        "makeblastdb -in {input.PROTEOME} -dbtype prot"
+
+rule mapping_ATG:
+    input:
+        R1="illumina/ATG_nonATG_proteome_nonProteome/{sample}/{sample}R1.ATG.fastq.gz",
+        R2="illumina/ATG_nonATG_proteome_nonProteome/{sample}/{sample}R2.ATG.fastq.gz",
+        FNA="references/HER1410.fasta"
+    output:
+        MAPATGALL="mapping/{sample}/{sample}.all.ATG.aln.sorted.bam",
+    conda:
+        "envs/fragments.yaml"
+    shell:
+        "bwa mem -t 8 {input.FNA} {input.R1} {input.R2} | samtools view -b -o - - | samtools sort -n -o {output.MAPATGALL}"
+
+rule filter_ATG_and_intersect:
+    input:
+        MAPATGALL="mapping/{sample}/{sample}.all.ATG.aln.sorted.bam",
+        FNA="references/HER1410.fasta"
+    output:
+        MAPATGCHECKED="mapping/{sample}/{sample}.ATG.checked.bam",
+        INTERSECT="fragments/{sample}/{sample}.intersects.tsv",
+    threads:
+        config['threads']
+    conda:
+        "envs/fragments.yaml"
+    shell:
+        "samtools view -b -F 2060 {input.MAPATGALL} -o {output.MAPATGCHECKED} && "
+        "echo -e 'Acc\\tStart\\tStop\\tName\\tMAPQ\\tStrand' > {output.INTERSECT} && "
+        "bedtools intersect -a references/HER1410.bed -b {output.MAPATGCHECKED} -wb | "
+        "awk '{{print $1\"\\t\"$2\"\\t\"$3\"\\t\"$8\"\\t\"$9\"\\t\"$10}}' | sort -k 4 >> {output.INTERSECT}"
+        
+rule map_ATG_extract_fragments:
+    input:
+        INTERSECT="fragments/{sample}/{sample}.intersects.tsv",
+        FNA="references/HER1410.fasta"
+    output:
+        FRAGMENTS="fragments/{sample}/{sample}.fragments.fasta",
+        FRAGREJECTED="fragments/{sample}/{sample}.fragments.rejected.fasta",
+        FRAGMENTSATG="fragments/{sample}/{sample}.fragments.atg.fasta",
+        FRAGMENTSNONATG="fragments/{sample}/{sample}.fragments.nonatg.fasta"
+    threads:
+        config['threads']
+    conda:
+        "envs/fragments.yaml"
+    shell:
+        "python scripts/extract_fragments.py {input.INTERSECT} {input.FNA} {output.FRAGMENTS} {output.FRAGREJECTED} {output.FRAGMENTSATG} {output.FRAGMENTSNONATG}"
+
+rule translate_fragments_and_filter:
+    input:
+        PROTEOME="references/proteome/HER1410_nonewline.faa",
+        INTERSECT="fragments/{sample}/{sample}.intersects.tsv",
+        FRAGMENTS="fragments/{sample}/{sample}.fragments.atg.fasta"
+    output:
+        FRAGMENTSNR="fragments/{sample}/{sample}.fragments.atg.nr.fasta",
+        FRAGMENTSNRCLUS="fragments/{sample}/{sample}.fragments.atg.nr.fasta.clstr",
+        FRAGMENTSVALIDATED="fragments/{sample}/{sample}.fragments.validated.fasta",
+        BLASTP="fragments/{sample}/{sample}.blastp",
+        BLASTPHEADER="fragments/{sample}/{sample}.blastp_header.txt",
+        FFAS="fragments/{sample}/{sample}.fragments.nr.ffa",
+        FRAGMENTSVALIDATEDNR="fragments/{sample}/{sample}.fragments.validated.nr.fasta",
+        FRAGMENTSVALIDATEDCLUS="fragments/{sample}/{sample}.fragments.validated.nr.fasta.clstr"
+    threads: config['threads']
+    conda:
+        "envs/fragments.yaml"
+    shell:
+        "cd-hit-est -i {input.FRAGMENTS} -o {output.FRAGMENTSNR} -r 0 -s 1.00 -c 1.00 -n 10 -d 0 -M 16000 -T {threads} && "
+        "python scripts/translate_and_blastp.py {output.FRAGMENTSNR} {output.FFAS} {output.BLASTP} {input.PROTEOME} && "
+        "awk '{{if ($10==0 || $10==1) print}}' {output.BLASTP} > {output.BLASTP}tmp && "
+        "echo -e 'qacc\\tsacc\\tstitle\\tqlen\\tslen\\tqstart\\tqend\\tlength\\tnident\\tmismatch\\tpositive\\tevalue' > {output.BLASTPHEADER} && "
+        "cat {output.BLASTPHEADER} {output.BLASTP}tmp > {output.BLASTP} && " 
+        "rm {output.BLASTP}tmp && "
+        "python scripts/protein_fragments_extraction.py {output.BLASTP} {output.FRAGMENTSNRCLUS} {input.FRAGMENTS} {output.FRAGMENTSVALIDATED} && "
+        "cd-hit-est -i {output.FRAGMENTSVALIDATED} -o {output.FRAGMENTSVALIDATEDNR} -r 0 -s 1.00 -c 1.00 -n 10 -d 0 -M 16000 -T {threads}"
+                
+rule map_fragments:
+    input:
+        FNA="references/HER1410.fasta",
+        FRAGMENTSVALIDATED="fragments/{sample}/{sample}.fragments.validated.fasta",
+        FRAGMENTSALL="fragments/{sample}/{sample}.fragments.fasta"
+    output:
+        BAMVALIDATED="mapping/{sample}/{sample}.fragments.validated.sorted.bam",
+        BAMALL="mapping/{sample}/{sample}.fragments.sorted.bam",
+    threads: 8
+    conda:
+        "envs/fragments.yaml"
+    shell:
+        "bwa mem -t 8 {input.FNA} {input.FRAGMENTSVALIDATED} | samtools view -b -o - - | samtools sort -o {output.BAMVALIDATED} && "
+        "samtools index {output.BAMVALIDATED} && "
+        "bwa mem -t 8 {input.FNA} {input.FRAGMENTSALL} | samtools view -b -o - - | samtools sort -o {output.BAMALL} && "
+        "samtools index {output.BAMALL}"
+
+#############################################################
+### COUNTING RULES (4 rules) + consolidation (1 rule)    ####
+# counts the raw reads and clean reads for each samples  ####
+# tabulates the results into a single file               ####
+#############################################################
+
+rule read_counts:
+    input:
+        R1Raw="illumina/raw/{sample}_R1.fastq.gz",
+        R2Raw="illumina/raw/{sample}_R2.fastq.gz",
+        R1Trimmomatic="illumina/clean/trimmomatic/{sample}R1.fastq.gz",
+        R2Trimmomatic="illumina/clean/trimmomatic/{sample}R2.fastq.gz",
+        R1Seqtk="illumina/clean/seqtk/{sample}R1.fastq.gz",
+        R2Seqtk="illumina/clean/seqtk/{sample}R2.fastq.gz",
+        R1NonATG="illumina/ATG_nonATG_proteome_nonProteome/{sample}/{sample}_R1.removed_nonATG.fastq.gz",
+        R2NonATG="illumina/ATG_nonATG_proteome_nonProteome/{sample}/{sample}_R2.removed_nonATG.fastq.gz",
+        R1ATG="illumina/ATG_nonATG_proteome_nonProteome/{sample}/{sample}R1.ATG.fastq.gz",
+        R2ATG="illumina/ATG_nonATG_proteome_nonProteome/{sample}/{sample}R2.ATG.fastq.gz",
+        R1NonProtFilter1="illumina/ATG_nonATG_proteome_nonProteome/{sample}/{sample}_R1.removed_nonProt.fastq.gz",
+        R2NonProtFilter1="illumina/ATG_nonATG_proteome_nonProteome/{sample}/{sample}_R2.removed_nonProt.fastq.gz",
+        R1PassProtFilter1="illumina/ATG_nonATG_proteome_nonProteome/{sample}/{sample}_R1.pass.fastq.gz",
+        R2PassProtFilter1="illumina/ATG_nonATG_proteome_nonProteome/{sample}/{sample}_R2.pass.fastq.gz",
+        FragmentsTotal="fragments/{sample}/{sample}.fragments.fasta",
+        FragmentsATG="fragments/{sample}/{sample}.fragments.atg.fasta",
+        FragmentsNonATG="fragments/{sample}/{sample}.fragments.nonatg.fasta",
+        FragmentsATGUnique="fragments/{sample}/{sample}.fragments.atg.nr.fasta",
+        FragmentsValidated="fragments/{sample}/{sample}.fragments.validated.fasta",
+        FragmentsRejected="fragments/{sample}/{sample}.fragments.rejected.fasta",
+        FragmentsValidatedUnique="fragments/{sample}/{sample}.fragments.validated.nr.fasta"
+    output:
+        "reporting/read_counts/{sample}.tsv"
+    shell:
+        "mkdir -p reporting/read_counts/ && "
+        "echo -e \"{wildcards.sample}\\t"
+        "$(($(zcat {input.R1Raw} | wc -l) / 4))\\t"
+        "$(($(zcat {input.R2Raw} | wc -l) / 4))\\t"
+        "$(($(zcat {input.R1Trimmomatic} | wc -l) / 4))\\t"
+        "$(($(zcat {input.R2Trimmomatic} | wc -l) / 4))\\t"
+        "$(($(zcat {input.R1Seqtk} | wc -l) / 4))\\t"
+        "$(($(zcat {input.R2Seqtk} | wc -l) / 4))\\t"
+        "$(($(zcat {input.R1ATG} | wc -l) / 4))\\t"
+        "$(($(zcat {input.R2ATG} | wc -l) / 4))\\t"
+        "$(($(zcat {input.R1NonATG} | wc -l) / 4))\\t"
+        "$(($(zcat {input.R2NonATG} | wc -l) / 4))\\t"
+        "$(($(zcat {input.R1NonProtFilter1} | wc -l) / 4))\\t"
+        "$(($(zcat {input.R2NonProtFilter1} | wc -l) / 4))\\t"
+        "$(($(zcat {input.R1PassProtFilter1} | wc -l) / 4))\\t"
+        "$(($(zcat {input.R2PassProtFilter1} | wc -l) / 4))\\t"
+        "$(cat {input.FragmentsTotal} | grep \">\" | wc -l)\\t"
+        "$(cat {input.FragmentsATG} | grep \">\" | wc -l)\\t"
+        "$(cat {input.FragmentsNonATG} | grep \">\" | wc -l)\\t"
+        "$(cat {input.FragmentsATGUnique} | grep \">\" | wc -l)\\t"
+        "$(cat {input.FragmentsValidated} | grep \">\" | wc -l)\\t"
+        "$(cat {input.FragmentsRejected} | grep \">\" | wc -l)\\t"
+        "$(cat {input.FragmentsValidatedUnique} | grep \">\" | wc -l)\\t\""
+        "> {output}"
+
+rule consolidate_read_counts:
+    input:
+        expand("reporting/read_counts/{sample}.tsv", sample=SAMPLES_ALL),
+        HEADER="assets/read_counts.header"
+    output:
+        "reporting/read_counts/consolidated.tsv"
+    shell:
+        "cat {input.HEADER} > {output} && "
+        "find reporting/read_counts/ -type f -name *.tsv -exec cat {{}} \\; >> {output}"
+
+#########################################################
+### mapping the reads to the reference (including    ####
+### plasmids and phiX and yeast chromosomes          ####
+#########################################################
+
+rule index_combined:
+    input:
+        ALL="references/all_components/combined_HER1410_plasmids_yeast.fasta",
+    output:
+        ALLindex="references/all_components/combined_HER1410_plasmids_yeast.fasta.amb"
+    conda:
+        "envs/fragments.yaml"
+    shell:
+        "bwa index -b bwtsw {input.ALL}"
+                                                        
+rule mapping_bwa_ref:
+    input:
+        R1="illumina/clean/seqtk/{sample}R1.fastq.gz",
+        R2="illumina/clean/seqtk/{sample}R2.fastq.gz",
+        ALL="references/all_components/combined_HER1410_plasmids_yeast.fasta",
+        ALLindex="references/all_components/combined_HER1410_plasmids_yeast.fasta.amb",
+        HER1410="references/HER1410.fasta",
+        HER1410index="references/HER1410.fasta.amb"
+    output:
+        ALLBAM="mapping/combined_references/{sample}.all.sorted.bam",
+        HER1410BAM="mapping/HER1410/{sample}.HER1410.sorted.bam"
+    threads:
+        config['threads']
+    conda:
+        "envs/fragments.yaml"
+    shell:
+        "mkdir -p mapping/combined_references/ mapping/HER1410/ &&"
+        "bwa mem -t 8 {input.ALL} {input.R1} {input.R2} | samtools view -b -o - - | samtools sort -o {output.ALLBAM} - && "
+        "samtools index {output.ALLBAM} && "
+        "bwa mem -t 8 {input.HER1410} {input.R1} {input.R2} | samtools view -b -o - - | samtools sort -o {output.HER1410BAM} - && "
+        "samtools index {output.HER1410BAM}"
+
+rule extract_unmapped:
+    input:
+        "mapping/combined_references/{sample}.all.sorted.bam"
+    output:
+        UNMAPPEDBAM="mapping/combined_references/{sample}.all.unmapped.bam",
+        UNMAPPEDBAMSORTED="mapping/combined_references/{sample}.all.unmapped.sorted.bam",
+        UNMAPPEDREADS="mapping/combined_references/{sample}.fastq"
+    conda:
+        "envs/fragments.yaml"
+    shell:
+        "samtools view -u -f 4 {input} > {output.UNMAPPEDBAM} && " # unmapped read whose mate is mapped
+        "samtools sort -n {output.UNMAPPEDBAM} -o {output.UNMAPPEDBAMSORTED} && "
+        "bamToFastq -i {output.UNMAPPEDBAMSORTED} -fq {output.UNMAPPEDREADS}"
+
+rule consolidate_read_mapping_counts:
+    output:
+        "reporting/mapping_reads_counts/{sample}.tsv"
+    conda:
+        "envs/fragments.yaml"
+    shell:
+        "mkdir -p reporting/mapping_reads_counts/ && "
+        "for f in $(find mapping/ -type f -name \"*HER1410.sorted.bam\"); "
+        "do "
+        "echo -e \""
+        "$(basename ${{f%.*.*.*}})\\t"
+        "HER1410\\t"
+        "$(samtools view $f | wc -l)\\t"
+        "$(samtools view -F 4 $f | wc -l)\\t\""
+        ">> {output};"
+        "done && "
+        "for f in $(find mapping/ -type f -name \"*all.sorted.bam\"); "
+        "do "
+        "echo -e \""
+        "$(basename ${{f%.*.*.*}})\\t"
+        "all\\t"
+        "$(samtools view $f | wc -l)\\t"
+        "$(samtools view -F 4 $f | wc -l)\\t\" "
+        ">> {output};"
+        "done && "
+        "sed -i '1iIdentifier\\tMappedAgainst\\tTotalCount\\tCountMapping' {output}"
+
+#########################################################
+### Counting the number of features mapped by reads  ####
+#########################################################
+rule counts_reads_features:
+    input:
+        BAMFRAGMENTSVALIDATED="mapping/{sample}/{sample}.fragments.validated.sorted.bam"
+    output:
+        COUNTS="reporting/htseq/all/{sample}.tsv"
+    conda:
+        "envs/htseq.yaml"
+    shell:
+        "mkdir -p reporting/htseq/ && "
+        "htseq-count -f bam --type 'CDS' --idattr 'ID' -s no {input.BAMFRAGMENTSVALIDATED} references/HER1410.gff "
+        "--additional-attr 'product' --nonunique all | "
+        "awk -v OFS=\"\\t\" 'BEGIN {{FS=\"\\t\"}}; {{if ($NF != 0) print \"{wildcards.sample}\", $0 }}' > {output.COUNTS}"
+
+rule counts_fragments_blastp:
+    input:
+        FRAGMENTSVALIDATED="fragments/{sample}/{sample}.fragments.validated.fasta",
+        PROTEOME="references/proteome/HER1410_nonewline.faa",
+        BLASTP="fragments/{sample}/{sample}.blastp",
+        FRAGMENTSVALIDATEDNR="fragments/{sample}/{sample}.fragments.validated.nr.fasta",
+        FRAGMENTSVALIDATEDCLUS="fragments/{sample}/{sample}.fragments.validated.nr.fasta.clstr",
+    output:
+        BLASTPCOUNTS="reporting/fragment_counts/all/{sample}.fragments.counts_blastp_with_length_and_translation.tsv"
+    conda:
+        "envs/fragments.yaml"
+    shell:
+        "mkdir -p reporting/fragment_counts/all && "
+        "python -W ignore scripts/blastp_fragments_counts.py {input.FRAGMENTSVALIDATEDNR} {input.PROTEOME} {input.BLASTP} {input.FRAGMENTSVALIDATEDCLUS} {wildcards.sample}"
+        "> {output.BLASTPCOUNTS}"
+
+rule consolidate_counts_htseq_and_blastp:
+    output:
+        HTSEQALL="reporting/htseq_consolidated.tsv",
+        BLASTPALL="reporting/blastp_consolidated.tsv"
+    shell:
+        "cat reporting/htseq/all/*.tsv > {output.HTSEQALL} && "
+        "cat reporting/fragment_counts/all/*.tsv > {output.BLASTPALL}"
+                                    
+rule htseq_raw_data:
+    input:
+        R1="illumina/raw/{sample}_R1.fastq.gz",
+        R2="illumina/raw/{sample}_R2.fastq.gz",
+        HER1410="references/HER1410.fasta"
+    output:
+        HER1410BAM="mapping/HER1410/{sample}.HER1410.raw.sorted.bam",
+        COUNTS="reporting/htseq/raw/{sample}.tsv"
+    threads:
+        config['threads']
+    conda:
+        "envs/htseq.yaml"
+    shell:
+        "mkdir -p mapping/combined_references/ mapping/HER1410/ &&"
+        "bwa mem -t 8 {input.HER1410} {input.R1} {input.R2} | samtools view -b -o - - | samtools sort -o {output.HER1410BAM} - && "
+        "samtools index {output.HER1410BAM} && "
+        "htseq-count -f bam --type 'CDS' --idattr 'ID' -s no {output.HER1410BAM} references/HER1410.gff "
+        "--additional-attr 'product' --nonunique all | "
+        "awk -v OFS=\"\\t\" 'BEGIN {{FS=\"\\t\"}}; {{if ($NF != 0) print \"{wildcards.sample}\", $0 }}' > {output.COUNTS}"                
