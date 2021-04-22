@@ -1,0 +1,7 @@
+wd: "../"
+
+sample_file_all: "snake/names_all.tab"
+sample_file_L1: "snake/names_L1.tab"
+sample_file_L2: "snake/names_L2.tab"
+
+threads: 8
